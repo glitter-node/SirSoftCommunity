@@ -1,0 +1,125 @@
+# audit:allow test-scenario-coverage reason: 본 매니페스트는 인스톨러 보안 패치의 시나리오 매트릭스 SSoT 로 기록. 회귀 가드는 test_files (InstallerSecurityHardening / ComposerPathValidation / BinaryPathPolicy) + manual_verification 의 양방향 PoC 로 커버하며, payload_class 19종 × vector 9종은 DataProvider 전수 전개라 조합별 docblock 마킹과 1:1 대응하지 않는다.
+
+feature: 인스톨러 후속 보안 강화 (composer 명령 / 확장 ID / pending 경로 / .env 라인 주입 / DSN 파라미터)
+
+description: |
+  인스톨러 Composer 경로 검증 결함 패치 직후 전체를 전수 감사하여 발견된 5개 추가
+  결함의 패치에 대한 시나리오 매트릭스.
+
+  배경:
+    - install-worker 내부 헬퍼 getComposerCommand() 가 동일한 "공백이면 전체 명령어"
+      가정을 또 가지고 있었음 (앞선 패치의 validateComposerPath 와 동일 패턴).
+    - save-extensions.php 가 모듈/플러그인/템플릿/언어팩 ID 를 strval 만으로 통과시켜
+      task-runner 가 artisan 명령에 그대로 보간 → 셸 메타문자 주입으로 RCE 성립.
+    - checkCorePendingPath 가 임의 경로의 존재/타입을 응답으로 분기 → 정찰 가능.
+    - escapeEnvValue 가 개행 미escape → DB 비밀번호 등 입력에 \n 포함 시 .env 라인 주입.
+    - PDO DSN 구성 시 host/port/database 에 ;= 등 메타문자 미차단 → DSN 파라미터 주입.
+
+  KVE-2026-1677 (2026-08-04 추가):
+    - Composer 칸의 공백 분리 입력에서 둘째 토큰이 인자 자리인데 문자 블랙리스트가
+      `-` `(` `)` `.` `/` 를 모두 허용해 닫히지 않았다. escapeshellarg 는 "하나의 인자"
+      임만 보장할 뿐 그 인자가 실행 파일인지 스크립트인지는 보장하지 않는다.
+      실측: 명령 끝의 ` --version` 은 스크립트 인자로 넘어가므로
+      `PHP경로 <임의스크립트>` 는 그 스크립트를 그대로 실행한다(마커 파일로 확인).
+      `-rCODE` 는 이 호출 지점에서는 `--version` 이 CLI 를 단락시켜 실행되지 않지만,
+      ` --version` 을 붙이지 않는 설치 워커 경로에서는 실행되므로 자리 자체를 닫는다.
+    - task-runner 의 getPhpBinary() 가 저장된 php_binary 를 검증 없이 실행 바이너리로
+      반환하고 있었다.
+    - 판정을 공용 정책(public/install/includes/binary-path-policy.php)으로 모아
+      인스톨러 API·설치 워커·저장 시점이 같은 규칙을 쓰게 정렬했다. stat 은 호출하지
+      않는다 — #361 의 open_basedir 회귀를 재발시키지 않기 위함이다.
+
+axes:
+  vector: [getComposerCommand, getComposerCommandForDisplay, save_extensions_id, check_core_pending_path, escapeEnvValue, getDatabaseConnection, getPhpBinary, validatePhpPath, validateComposerPath, handleStep3Post]
+  payload_class: [empty, normal, shell_meta_space, shell_meta_semicolon, shell_meta_backtick, shell_meta_dollarparen, shell_meta_pipe, shell_meta_redirect, newline_lf, newline_crlf, parent_traversal, null_byte, dsn_semicolon, dsn_equals, argument_injection_dash_r, interpreter_plus_script, relative_path, hash_comment_phar, wrapper_script_name]
+  expected_outcome: [accept_normal, fall_back_to_default, return_invalid_message, throw_pdo_exception, strip_silently]
+
+exclusions:
+  - { vector: getDatabaseConnection, payload_class: parent_traversal, reason: "DSN 검증은 traversal 과 무관" }
+  - { vector: escapeEnvValue, payload_class: parent_traversal, reason: "env value 는 경로 traversal 과 무관" }
+  - { vector: check_core_pending_path, payload_class: dsn_semicolon, reason: "경로 검증은 DSN 과 무관" }
+
+effects:
+  # Critical-1: getComposerCommand
+  - getComposerCommand_returns_composer_for_empty_input
+  - getComposerCommand_returns_composer_for_shell_metachar_input
+  - getComposerCommand_returns_composer_for_nonexistent_path
+  - getComposerCommand_returns_composer_for_directory_path
+  - getComposerCommand_returns_escapeshellarg_quoted_path_for_valid_binary
+  - getComposerCommand_combines_php_and_phar_via_escapeshellarg
+  - getComposerCommandForDisplay_does_not_leak_shell_payload
+  - isInstallerExecutablePath_rejects_metachars
+  - isInstallerExecutablePath_rejects_nonexistent
+
+  # Critical-2: save-extensions ID 화이트리스트
+  - save_extensions_accepts_normal_identifiers
+  - save_extensions_rejects_id_with_space
+  - save_extensions_rejects_id_with_semicolon
+  - save_extensions_rejects_id_with_backtick
+  - save_extensions_rejects_id_with_dollar_paren
+  - save_extensions_rejects_id_with_redirect
+  - save_extensions_rejects_id_with_traversal
+  - save_extensions_returns_400_for_invalid_id
+
+  # High-2: checkCorePendingPath
+  - check_core_pending_path_rejects_double_dot_segment
+  - check_core_pending_path_rejects_null_byte
+  - check_core_pending_path_returns_uniform_message_for_nonexistent
+  - check_core_pending_path_returns_uniform_message_for_file_path
+  - check_core_pending_path_returns_writable_for_valid_dir
+
+  # Medium-1: escapeEnvValue
+  - escapeEnvValue_strips_lf_from_input
+  - escapeEnvValue_strips_cr_from_input
+  - escapeEnvValue_preserves_normal_password
+  - escapeEnvValue_escapes_quotes_and_backslashes
+  - escapeEnvValue_no_unclosed_quote_after_strip
+
+  # Medium-2: getDatabaseConnection DSN sanitize
+  - dsn_throws_for_semicolon_in_host
+  - dsn_throws_for_equals_in_database
+  - dsn_throws_for_newline_in_port
+  - dsn_throws_for_null_byte_in_any_param
+  - dsn_accepts_normal_localhost_3306
+
+  # KVE-2026-1677: 실행 바이너리 경로의 인자 자리 차단
+  - argument_injection_never_reaches_exec
+  - leading_hyphen_token_is_rejected
+  - php_slot_rejects_leading_hyphen
+  - relative_and_traversal_paths_are_rejected
+  - legitimate_paths_still_reach_exec
+  - getPhpBinary_falls_back_to_default_for_disallowed_shape
+  - getPhpBinary_passes_through_legitimate_paths
+  - getComposerCommand_rejects_interpreter_plus_arbitrary_script
+  - getComposerCommand_keeps_multi_php_pair_support
+  - step3_post_rejects_disallowed_binary_paths_before_save
+  - step3_post_accepts_legitimate_binary_paths
+
+# E2E axis 없음: 인스톨러는 템플릿 엔진(레이아웃 JSON / 컴포넌트 TSX / 핸들러 TS)을 쓰지
+# 않는 독립 PHP 화면이고, 이번 변경은 전부 서버측 판정(정책 함수 · API · 설치 워커 ·
+# 저장 시점)이다. Playwright 스위트는 설치가 끝난 애플리케이션을 대상으로 하며 설치
+# 과정 자체를 구동하지 않으므로 (frontend-change-requires-e2e 룰의 대상이 아님)
+# 양방향 확인은 아래 manual_verification 의 PoC 가 담당한다.
+
+test_files:
+  - tests/Unit/Installer/InstallerSecurityHardeningTest.php
+  - tests/Unit/Installer/ComposerPathValidationTest.php
+  - tests/Unit/Installer/BinaryPathPolicyTest.php
+  - tests/Unit/Installer/InstallerStep3BinaryPathStoreGuardTest.php
+
+manual_verification:
+  - description: "Critical-1 양방향 PoC — composer_binary 셸 페이로드"
+    steps:
+      - "state.json 의 config.composer_binary 를 'sh -c \"id > /tmp/g7_C1\"' 로 설정 후 install-worker 트리거"
+      - "패치 전: /tmp/g7_C1 생성됨 (RCE)"
+      - "패치 후: getComposerCommand 가 'composer' 폴백 → /tmp/g7_C1 미생성"
+  - description: "Critical-2 양방향 PoC — modules ID 셸 페이로드"
+    steps:
+      - "POST /install/api/save-extensions.php body: {\"admin_templates\":[\"sirsoft-admin_basic\"],\"modules\":[\"foo; sh -c \\\"id > /tmp/g7_C2\\\"; #\"]}"
+      - "패치 전: 200 OK + state 저장 성공 → install-worker 진입 시 RCE 가능"
+      - "패치 후: 400 Bad Request + error_invalid_extension_identifier → state 미저장"
+  - description: "정상 흐름 비파괴 검증"
+    steps:
+      - "정상 ID (sirsoft-board, gnuboard7-hello_module 등) 를 POST → 200 OK"
+      - "정상 composer 바이너리 경로 (예: /usr/bin/composer) 설정 → escape 적용된 명령어 구성"
+      - "정상 DB 자격증명 (host=localhost, port=3306, database=g7) → 연결 시도 진행"

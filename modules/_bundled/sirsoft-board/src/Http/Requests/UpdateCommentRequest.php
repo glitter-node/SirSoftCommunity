@@ -1,0 +1,100 @@
+<?php
+
+namespace Modules\Sirsoft\Board\Http\Requests;
+
+use App\Extension\HookManager;
+use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
+use Modules\Sirsoft\Board\Enums\PostStatus;
+use Modules\Sirsoft\Board\Repositories\Contracts\BoardRepositoryInterface;
+use Modules\Sirsoft\Board\Rules\BlockedKeywordsRule;
+
+/**
+ * 댓글 수정 요청 폼 검증
+ */
+class UpdateCommentRequest extends FormRequest
+{
+    /**
+     * 사용자가 이 요청을 수행할 권한이 있는지 확인
+     *
+     * @return bool 권한 검증 결과 (권한 체크는 미들웨어 위임, 항상 true)
+     */
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * 요청에 적용할 검증 규칙
+     *
+     * @return array<string, mixed>
+     */
+    public function rules(): array
+    {
+        $slug = $this->route('slug');
+        $board = app(BoardRepositoryInterface::class)->findBySlug($slug);
+
+        if (! $board) {
+            return [];
+        }
+
+        // 비회원 여부 확인 (request()->user()를 사용해야 PermissionMiddleware에서 설정한 사용자를 인식)
+        $isGuest = ! $this->user();
+
+        // 검증 토큰(verify-password 로 발급)이 있으면 평문 비밀번호 재전송을 요구하지 않는다.
+        // (게시글 수정 경로와 동형 — 토큰이 본인 확인을 대체하며, 컨트롤러가 1회 소비한다)
+        $hasVerificationToken = $this->filled('verification_token');
+
+        // 금지 키워드 목록 가져오기 (게시글과 동일하게 게시판 설정 기준)
+        $blockedKeywords = $board->blocked_keywords ?? [];
+
+        $rules = [
+            'content' => [
+                'required',
+                'string',
+                'min:'.($board->min_comment_length ?? 2),
+                'max:'.($board->max_comment_length ?? 1000),
+                new BlockedKeywordsRule($blockedKeywords),
+            ],
+            'is_secret' => ['boolean'],
+            'status' => ['nullable', 'string', Rule::in(PostStatus::values())],
+            // 비회원인 경우 비밀번호 필수 (수정 권한 검증용). 단, 검증 토큰이 있으면 선택.
+            'password' => [$isGuest && ! $hasVerificationToken ? 'required' : 'nullable', 'string', 'min:4', 'max:20'],
+            'verification_token' => ['nullable', 'string', 'max:255'],
+        ];
+
+        // 훅: 모듈/플러그인이 validation rules를 동적으로 추가할 수 있도록 필터 제공
+        return HookManager::applyFilters('sirsoft-board.comment.update_validation_rules', $rules, $this);
+    }
+
+    /**
+     * 검증 오류 메시지 커스터마이징
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'content.required' => __('sirsoft-board::validation.comment.content.required'),
+            'content.min' => __('sirsoft-board::validation.comment.content.min'),
+            'content.max' => __('sirsoft-board::validation.comment.content.max'),
+            'password.required' => __('sirsoft-board::validation.comment.password.required'),
+            'password.min' => __('sirsoft-board::validation.comment.password.min'),
+        ];
+    }
+
+    /**
+     * 검증할 필드의 이름을 커스터마이징
+     *
+     * @return array<string, string>
+     */
+    public function attributes(): array
+    {
+        return [
+            'content' => __('sirsoft-board::validation.attributes.comment.content'),
+            'is_secret' => __('sirsoft-board::validation.attributes.comment.is_secret'),
+            'status' => __('sirsoft-board::validation.attributes.comment.status'),
+            'password' => __('sirsoft-board::validation.attributes.comment.password'),
+        ];
+    }
+}

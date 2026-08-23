@@ -1,0 +1,58 @@
+<?php
+
+namespace Modules\Sirsoft\Board\Http\Requests;
+
+use Illuminate\Foundation\Http\FormRequest;
+
+/**
+ * 댓글 블라인드 처리 요청 폼 검증
+ */
+class BlindCommentRequest extends FormRequest
+{
+    /**
+     * 사용자가 이 요청을 수행할 권한이 있는지 확인
+     *
+     * @return bool 권한 보유 여부
+     */
+    public function authorize(): bool
+    {
+        return true;
+    }
+
+    /**
+     * 요청에 적용할 검증 규칙
+     *
+     * @return array<string, mixed>
+     */
+    public function rules(): array
+    {
+        return [
+            'reason' => ['nullable', 'string', 'max:1000'],
+        ];
+    }
+
+    /**
+     * 검증 오류 메시지 커스터마이징
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            // reason 규칙에 min 이 없으므로 min 메시지는 매핑하지 않는다 (死매핑 정리 — lang 키 자체는 유지)
+            'reason.max' => __('sirsoft-board::validation.blind.reason.max'),
+        ];
+    }
+
+    /**
+     * 검증할 필드의 이름을 커스터마이징
+     *
+     * @return array<string, string>
+     */
+    public function attributes(): array
+    {
+        return [
+            'reason' => __('sirsoft-board::validation.attributes.blind.reason'),
+        ];
+    }
+}

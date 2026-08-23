@@ -1,0 +1,140 @@
+{
+    "version": "1.0.0",
+    "meta": {
+        "_e2e_allow": "e2e:allow 다크 모드 대비 클래스(dark:bg-blue-500/dark:hover:bg-blue-600) 추가만으로 동작 변화 없음. 클래스가 실제 CSS 로 생성되는지는 빌드 산출물에서 확인. 샘플 모듈 전용 화면이라 Playwright spec 부재.",
+        "title": "$t:gnuboard7-hello_module.admin.memos.index.title",
+        "description": "$t:gnuboard7-hello_module.admin.memos.index.description"
+    },
+    "layout_name": "admin_memo_list",
+    "permissions": [
+        "gnuboard7-hello_module.memos.read"
+    ],
+    "extends": "_admin_base",
+    "data_sources": [
+        {
+            "id": "memos",
+            "label_key": "$t:gnuboard7-hello_module.editor.data_source.memos",
+            "type": "api",
+            "endpoint": "/api/modules/gnuboard7-hello_module/admin/memos",
+            "method": "GET",
+            "auto_fetch": true,
+            "auth_required": true,
+            "params": {
+                "page": "{{query.page}}",
+                "per_page": "{{query.per_page ?? 10}}"
+            },
+            "fallback": {
+                "data": {
+                    "data": [],
+                    "meta": {
+                        "current_page": 1,
+                        "last_page": 1,
+                        "per_page": 10,
+                        "total": 0
+                    }
+                }
+            }
+        }
+    ],
+    "slots": {
+        "content": [
+            {
+                "id": "memo_list_wrapper",
+                "type": "basic",
+                "name": "Div",
+                "props": {
+                    "className": "admin-page-content"
+                },
+                "children": [
+                    {
+                        "id": "memo_list_header",
+                        "type": "basic",
+                        "name": "Div",
+                        "props": {
+                            "className": "flex-between mb-6"
+                        },
+                        "children": [
+                            {
+                                "id": "memo_list_title",
+                                "type": "basic",
+                                "name": "H1",
+                                "props": {
+                                    "className": "text-page-heading"
+                                },
+                                "text": "$t:gnuboard7-hello_module.admin.memos.index.title"
+                            },
+                            {
+                                "id": "memo_create_button",
+                                "type": "basic",
+                                "name": "Button",
+                                "props": {
+                                    "type": "button",
+                                    "className": "px-4 py-2 bg-blue-600 dark:bg-blue-500 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-600 font-medium transition-colors"
+                                },
+                                "actions": [
+                                    {
+                                        "type": "click",
+                                        "handler": "navigate",
+                                        "params": {
+                                            "path": "/admin/memos/create",
+                                            "mergeQuery": true,
+                                            "query": {}
+                                        }
+                                    }
+                                ],
+                                "children": [
+                                    {
+                                        "type": "basic",
+                                        "name": "Span",
+                                        "text": "$t:gnuboard7-hello_module.admin.memos.form.title_create"
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "id": "memo_items_{{idx}}",
+                        "type": "basic",
+                        "name": "Div",
+                        "props": {
+                            "className": "row-stack"
+                        },
+                        "iteration": {
+                            "source": "{{memos?.data?.data ?? []}}",
+                            "item_var": "memo",
+                            "index_var": "idx"
+                        },
+                        "children": [
+                            {
+                                "id": "memo_item_{{idx}}",
+                                "type": "basic",
+                                "name": "Div",
+                                "props": {
+                                    "className": "p-4 bg-white dark:bg-gray-800 rounded-lg shadow border border-gray-200 dark:border-gray-700"
+                                },
+                                "children": [
+                                    {
+                                        "type": "basic",
+                                        "name": "H2",
+                                        "props": {
+                                            "className": "section-heading"
+                                        },
+                                        "text": "{{memo.title ?? ''}}"
+                                    },
+                                    {
+                                        "type": "basic",
+                                        "name": "P",
+                                        "props": {
+                                            "className": "mt-2 text-sm text-gray-600 dark:text-gray-300"
+                                        },
+                                        "text": "{{memo.content ?? ''}}"
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    }
+}

@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}">
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="csrf-token" content="{{ csrf_token() }}">
+        {!! g7_meta_generator_tag() !!}
+    
+        <title>{{ config('app.name', '그누보드7') }}</title>
+
+        @if($metaDescription = g7_core_settings('seo.meta_description'))
+        <meta name="description" content="{{ $metaDescription }}">
+        @endif
+
+        <!-- 템플릿 외부 리소스 (template.json의 externals) -->
+        @include('partials.template-externals-head')
+     
+        <!-- Fallback UI 스타일 -->
+        @if(empty($activeUserTemplate))
+        @include('partials.error-fallback-styles')
+        @endif
+
+        @include('partials.asset-url-recovery')
+
+        @if(!empty($activeUserTemplate))
+        <link rel="stylesheet"
+              href="{{ \App\Support\AssetUrl::templateAsset($activeUserTemplate, 'css/components.css', $extensionCacheVersion) }}"
+              onerror="window.__g7AssetUrl && window.__g7AssetUrl.recoverStylesheet(this);">
+        @endif
+    </head>
+	<body>
+        <!-- React 렌더링 루트 -->
+        <div id="app" data-template-id="{{ $activeUserTemplate ?? '' }}">
+            <!-- Progressive Enhancement: 템플릿 없음 Fallback UI -->
+            @if(empty($activeUserTemplate))
+            @include('partials.error-fallback-ui')
+            @endif
+        </div>
+
+        @if(!empty($activeUserTemplate))
+        <!-- G7 설정 전역 변수 -->
+        <script>
+            window.G7Config = {
+                settings: @json($frontendSettings ?? []),
+                plugins: @json($pluginSettings ?? []),
+                modules: @json($moduleSettings ?? []),
+                moduleAssets: @json($moduleAssets ?? []),
+                pluginAssets: @json($pluginAssets ?? []),
+                bundleUrls: @json($bundleUrls ?? null),
+                activeModules: @json($activeModulesMeta ?? []),
+                activePlugins: @json($activePluginsMeta ?? []),
+                trustedScriptHosts: @json($trustedScriptHosts ?? []),
+                appConfig: @json($appConfig ?? []),
+                // 레이아웃 편집기 lazy 번들 URL — `/admin/layout-editor/*` 진입 시에만 런타임
+                // <script> 주입으로 로드된다(초기 접속 payload 에 미포함). filemtime 캐시버스팅,
+                // 미빌드 상태 대비 file_exists 가드.
+                coreEditorAsset: '{{ asset('build/core/layout-editor.min.js') }}?v={{ file_exists(public_path('build/core/layout-editor.min.js')) ? filemtime(public_path('build/core/layout-editor.min.js')) : 0 }}',
+                // DevTools lazy 번들 URL — 디버그 모드에서만 런타임 <script> 주입으로 로드.
+                coreDevToolsAsset: '{{ asset('build/core/devtools.min.js') }}?v={{ file_exists(public_path('build/core/devtools.min.js')) ? filemtime(public_path('build/core/devtools.min.js')) : 0 }}',
+                // 확장 캐시 버전 SSoT — 클라이언트 fetch (`?v=`) 동반 필수.
+                // 자세한 설명은 admin.blade.php 참조.
+                cache_version: {{ (int) ($extensionCacheVersion ?? 0) }},
+                // 자산 URL 모드 — 'extension'(기본) | 'extensionless'.
+                // 정적 최적화 블록(location ~* \.(js|css|json)$)이 동적 응답을 가로채는
+                // 서버에서 확장자 없는 형태로 전환한다. 부트스트랩 자가 복구가 실패 시
+                // 이 값을 런타임에 뒤집으므로 최상위 키로 노출한다(설정값 SSoT 는
+                // G7Config.settings.general.asset_url_mode).
+                // 자가 복구가 <head> 에서 이미 전환을 확정했다면 그 값을 잇는다.
+                // 이 대입은 G7Config 객체를 통째로 교체하므로, 독립 전역을 읽지 않으면
+                // 복원/전환 결과가 여기서 덮여 사라진다.
+                assetUrlMode: window.__g7AssetUrlMode || '{{ \App\Support\AssetUrl::mode() }}'
+            };
+            @if(isset($errorCode) && isset($errorLayout))
+            // 에러 상태 정보 (503 의존성 미충족 등)
+            window.G7Error = {
+                code: {{ $errorCode }},
+                layout: '{{ $errorLayout }}',
+                data: @json($unmetDependencies ?? [])
+            };
+            @endif
+        </script>
+
+        @include('partials.template-externals-scripts', ['position' => 'before-core'])
+
+        {{-- 코어 엔진 + 템플릿 컴포넌트 번들 로드 → 초기화 (재시도 + 폴백 UI) --}}
+        @include('partials.bootstrap-scripts', [
+            'templateType' => 'user',
+            {{-- 코어 엔진 번들은 public/ 의 실물 정적 파일이라 자산 URL 이중 모드 대상이 아니다.
+                 미빌드 상태에서 filemtime() 이 warning 을 내지 않도록 file_exists 가드
+                 (coreEditorAsset/coreDevToolsAsset 와 동일 패턴). --}}
+            'coreEngineSrc' => asset('build/core/template-engine.min.js') . '?v=' . (file_exists(public_path('build/core/template-engine.min.js')) ? filemtime(public_path('build/core/template-engine.min.js')) : 0),
+            'componentsSrc' => \App\Support\AssetUrl::templateAsset($activeUserTemplate, 'js/components.iife.js', $extensionCacheVersion),
+            'initConfig' => array_filter([
+                'templateId' => $activeUserTemplate,
+                'templateType' => 'user',
+                'locale' => app()->getLocale(),
+                'debug' => (bool) config('app.debug'),
+                'websocket' => config('broadcasting.connections.reverb.key') ? [
+                    'appKey' => config('broadcasting.connections.reverb.key'),
+                    'host' => config('g7.websocket.client.host', config('broadcasting.connections.reverb.options.host', 'localhost')),
+                    'port' => (int) config('g7.websocket.client.port', config('broadcasting.connections.reverb.options.port', 80)),
+                    'scheme' => config('g7.websocket.client.scheme', config('broadcasting.connections.reverb.options.scheme', 'https')),
+                ] : null,
+            ], fn ($value) => $value !== null),
+        ])
+
+        @include('partials.template-externals-scripts', ['position' => 'body-end'])
+        @endif
+    </body>
+</html>
